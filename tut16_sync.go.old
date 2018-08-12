@@ -1,0 +1,93 @@
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"html/template"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gorilla/mux"
+)
+
+var wg sync.WaitGroup
+
+type SitemapIndex struct {
+	Locations []string `xml:"sitemap>loc"`
+}
+
+type News struct {
+	Titles    []string `xml:"url>news>title"`
+	Keywords  []string `xml:"url>news>keywords"`
+	Locations []string `xml:"url>loc"`
+}
+
+type NewsMap struct {
+	Keyword  string
+	Location string
+}
+
+type NewsAggPage struct {
+	Title string
+	News  map[string]NewsMap
+}
+
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "<h1> Whoa this is neat!</h1>")
+}
+
+func newsAggHandler(w http.ResponseWriter, r *http.Request) {
+	var s SitemapIndex
+	var n News
+	/* var newsMap sync.Map */
+	newsMap := make(map[string]NewsMap)
+
+	resp, _ := http.Get("https://www.washingtonpost.com/news-sitemap-index.xml")
+	bytes, _ := ioutil.ReadAll(resp.Body)
+	xml.Unmarshal(bytes, &s)
+
+	fmt.Printf("Gonna make %v requests", len(s.Locations))
+	time1 := time.Now().UnixNano() / 1000000
+	for _, location := range s.Locations {
+		wg.Add(1)
+		/* go  */ requestAndMap(location, &n, newsMap)
+		/* fmt.Printf("\n %v, Titles: %s", index+1, n.Titles) */
+	}
+	wg.Wait()
+	time2 := time.Now().UnixNano() / 1000000
+	fmt.Printf("\n%v\n", time2-time1)
+	/* fmt.Println(newsMap) */
+	p := NewsAggPage{Title: "Amazing news agg", News: newsMap}
+	t, _ := template.ParseFiles("basicTemplating.html")
+	t.Execute(w, p)
+	/* fmt.Fprintf(w, "im done") */
+}
+
+func requestAndMap(location string, n *News, newsMap map[string]NewsMap) {
+	defer cleanUp()
+	resp, err := http.Get(location)
+	if err != nil {
+		panic("Omg something went wrong!")
+	}
+	bytes, err2 := ioutil.ReadAll(resp.Body)
+	if err2 != nil {
+		panic("Omg something went wrong!")
+	}
+	xml.Unmarshal(bytes, &n)
+	for index := range n.Keywords {
+		/* fmt.Println("Hello", index) */
+		/* newsMap.Store(n.Titles[index], NewsMap{n.Keywords[index], n.Locations[index]}) */
+		newsMap[n.Titles[index]] = NewsMap{n.Keywords[index], n.Locations[index]}
+	}
+}
+
+func tut16() {
+	r := mux.NewRouter()
+
+	r.HandleFunc("/", indexHandler)
+	r.HandleFunc("/agg/", newsAggHandler)
+	log.Fatal(http.ListenAndServe(":8081", r))
+}
